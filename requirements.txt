@@ -3,5 +3,8 @@ urllib3
 httpcloak
 python-dotenv
 selenium
-pycryptodome 
+pycryptodome
 colorama
+python-telegram-bot[job-queue]>=21.0
+APScheduler>=3.10
+pytz

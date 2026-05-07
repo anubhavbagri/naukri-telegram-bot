@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assests/logo2.svg" alt="naukri-api-client" width="680"/>
+  <img src="assets/logo2.svg" alt="naukri-api-client" width="680"/>
 </p>
 
 # Noperi

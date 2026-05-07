@@ -138,11 +138,12 @@ class NaukriLoginClient:
             print(res.content)
             raise NaukriAuthError("Login failed")
 
-        token = self.session.cookies.get("nauk_at")
+        cookies = {c.name: c.value for c in self.session.cookies}
+        token = cookies.get("nauk_at")
         if not token:
             raise NaukriAuthError("No token")
 
-        self.naukri_session = NaukriSession(token, self.session.cookies)
+        self.naukri_session = NaukriSession(token, cookies)
 
         try:
             self.cache["form_key"] = self.get_form_key2()
@@ -198,7 +199,8 @@ class NaukriLoginClient:
             logger.error("OTP verification failed: %s %s", res.status_code, res.text)
             raise NaukriAuthError(f"OTP verification failed ({res.status_code})")
 
-        token = self.session.cookies.get("nauk_at")
+        cookies = {c.name: c.value for c in self.session.cookies}
+        token = cookies.get("nauk_at")
         if not token:
             # Some flows return the token in the JSON body instead
             try:
@@ -209,7 +211,7 @@ class NaukriLoginClient:
         if not token:
             raise NaukriAuthError("OTP verified but no auth token received")
 
-        self.naukri_session = NaukriSession(token, self.session.cookies)
+        self.naukri_session = NaukriSession(token, cookies)
 
         try:
             self.cache["form_key"] = self.get_form_key2()

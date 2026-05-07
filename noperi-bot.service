@@ -1,0 +1,20 @@
+[Unit]
+Description=NopeRi Naukri Telegram Bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/NopeRi
+ExecStart=/home/ubuntu/NopeRi/venv/bin/python bot.py
+Restart=on-failure
+RestartSec=10
+EnvironmentFile=/home/ubuntu/NopeRi/.env
+
+# Logs go to journald — view with: journalctl -u noperi-bot -f
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
