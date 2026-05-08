@@ -11,16 +11,22 @@ MANUAL COMMANDS:
   /testrun   – force-run the morning profile update right now (no delay)
   /jobnow    – force-fetch recommended jobs right now
   /search    – search jobs with optional filters
-               usage: /search <keyword> [exp=N] [loc=City] [company=Name] [page=N]
+               usage: /search <keyword> [exp=N] [loc=City] [days=N] [page=N]
                example: /search Java backend exp=2 loc=Hyderabad
+  /hm        – email the Hiring Manager (resume auto-attached)
+               usage: /hm to@email.com|Name|Company[|Position[|JobID]]
+  /hr        – email HR (resume auto-attached)
+               usage: /hr to@email.com|Name|Company[|Position[|JobID]]
   /cancel    – cancel any active flow
 
 Required .env:
   TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, USERNAME, PASSWORD
+  GMAIL_FROM, GMAIL_APP_PASSWORD
 Optional .env:
   DEFAULT_RESUME_PATH  (default: assets/resume.pdf)
   TIMEZONE             (default: Asia/Kolkata)
   NAUKRI_DEFAULT_FAREA (farea filter for /search; default: empty = all)
+  GMAIL_SENDER_NAME    (display name in From: header)
 
 State: scheduler_state.json  |  Content: src/config/content.py
 """
@@ -51,6 +57,11 @@ from src.client.job_client import NaukriJobClient
 from src.client.jop_classifier import JobFilterPipeline2
 from src.client.naukri_client import NaukriLoginClient
 from src.config.content import HEADLINES, SUMMARIES
+from src.config.email_templates import (
+    HM_BODY, HM_SUBJECT,
+    HR_BODY, HR_SUBJECT,
+)
+from src.utils.email_sender import send_email
 
 load_dotenv()
 
@@ -74,6 +85,10 @@ ALLOWED_CHAT_ID: int = int(_raw_chat_id) if _raw_chat_id.lstrip("-").isdigit() e
 DEFAULT_RESUME_PATH = _env("DEFAULT_RESUME_PATH", "assets/resume.pdf")
 TIMEZONE = _env("TIMEZONE", "Asia/Kolkata")
 DEFAULT_FAREA = _env("NAUKRI_DEFAULT_FAREA", "")
+
+# Email (Gmail App Password auth)
+GMAIL_FROM = _env("GMAIL_FROM")
+GMAIL_SENDER_NAME = _env("GMAIL_SENDER_NAME")
 
 # Morning update window: 08:30 IST + up to +3 h random jitter
 _WINDOW_HOUR = 8
@@ -895,6 +910,127 @@ async def _on_startup(app: Application) -> None:
     )
 
 
+# ── Email helpers ─────────────────────────────────────────────────────────────
+
+_EMAIL_USAGE = (
+    "Usage:\n"
+    "  <code>/{cmd} email Name Company [pos=Position] [id=JobID]</code>\n"
+    "  • <b>email</b> — recipient address\n"
+    "  • <b>Name</b>  — one word (e.g. Priya)\n"
+    "  • <b>Company</b> — one or more words (everything before any pos=/id=)\n\n"
+    "Examples:\n"
+    "  <code>/{cmd} hr@acme.com Priya Acme Corp</code>\n"
+    "  <code>/{cmd} hr@acme.com Priya Acme Corp pos=Backend Engineer</code>\n"
+    "  <code>/{cmd} hr@acme.com Priya Acme Corp id=JOB-42</code>\n"
+    "  <code>/{cmd} hr@acme.com Priya Acme Corp pos=SDE1 id=JOB-42</code>"
+)
+
+
+def _parse_email_args(args: list) -> dict | None:
+    """
+    Parse space-separated email args.
+    Format: email Name Company [pos=...words...] [id=...words...]
+      - email:   args[0]
+      - name:    args[1]  (single word)
+      - company: all subsequent tokens that don't start with pos= or id=
+      - pos=, id=: key=value tokens; multi-word values supported (tokens after
+                   the key= are collected until the next key= is seen)
+    Returns None if mandatory fields (email/name/company) are missing.
+    """
+    if len(args) < 3:
+        return None
+    to = args[0].strip()
+    name = args[1].strip()
+    if not to or not name:
+        return None
+
+    company_parts: list[str] = []
+    kv: dict[str, list[str]] = {}
+    current_key: str | None = None
+
+    for token in args[2:]:
+        lower = token.lower()
+        if lower.startswith("pos="):
+            current_key = "pos"
+            kv[current_key] = [token[4:]] if token[4:] else []
+        elif lower.startswith("id="):
+            current_key = "id"
+            kv[current_key] = [token[3:]] if token[3:] else []
+        elif current_key is not None:
+            kv[current_key].append(token)
+        else:
+            company_parts.append(token)
+
+    if not company_parts:
+        return None
+
+    return {
+        "to": to,
+        "name": name,
+        "company": " ".join(company_parts),
+        "position": " ".join(kv.get("pos", [])),
+        "jobid": " ".join(kv.get("id", [])),
+    }
+
+
+async def _cmd_email(update: Update, context, subject_tpl: str, body_tpl: str, cmd: str) -> None:
+    """Shared logic for /hm and /hr."""
+    if not _is_authorised(update):
+        return
+
+    parsed = _parse_email_args(context.args or [])
+    if not parsed:
+        await update.message.reply_text(
+            _EMAIL_USAGE.replace("{cmd}", cmd),
+            parse_mode="HTML",
+        )
+        return
+
+    status = await update.message.reply_text(
+        f"📧 Sending email to <b>{parsed['to']}</b>…",
+        parse_mode="HTML",
+    )
+    try:
+        await asyncio.get_event_loop().run_in_executor(
+            None,
+            lambda: send_email(
+                to=parsed["to"],
+                subject_template=subject_tpl,
+                body_template=body_tpl,
+                name=parsed["name"],
+                company=parsed["company"],
+                position=parsed["position"],
+                jobid=parsed["jobid"],
+                resume_path=DEFAULT_RESUME_PATH,
+            ),
+        )
+    except Exception as exc:
+        logger.exception("Email send failed")
+        await status.edit_text(f"❌ Failed to send: <code>{exc}</code>", parse_mode="HTML")
+        return
+
+    lines = [f"✅ Email sent to <b>{parsed['to']}</b>"]
+    lines.append(f"To: <b>{parsed['name']}</b> @ <b>{parsed['company']}</b>")
+    if parsed["position"]:
+        lines.append(f"Position: <b>{parsed['position']}</b>")
+    if parsed["jobid"]:
+        lines.append(f"Job ID: <b>{parsed['jobid']}</b>")
+    lines.append("📎 Resume attached")
+    await status.edit_text("\n".join(lines), parse_mode="HTML")
+
+
+async def cmd_hm(update: Update, context) -> None:
+    """Send a cold-outreach email to a Hiring Manager."""
+    await _cmd_email(update, context, HM_SUBJECT, HM_BODY, "hm")
+
+
+async def cmd_hr(update: Update, context) -> None:
+    """Send an application email to HR."""
+    await _cmd_email(update, context, HR_SUBJECT, HR_BODY, "hr")
+
+
+# ── Lifecycle ─────────────────────────────────────────────────────────────────
+
 async def _on_shutdown(app: Application) -> None:
     scheduler = app.bot_data.get("scheduler")
     if scheduler and scheduler.running:
@@ -967,6 +1103,8 @@ def main() -> None:
     app.add_handler(CommandHandler("testrun", cmd_testrun))
     app.add_handler(CommandHandler("jobnow",  cmd_jobnow))
     app.add_handler(CommandHandler("search",  cmd_search))
+    app.add_handler(CommandHandler("hm",      cmd_hm))
+    app.add_handler(CommandHandler("hr",      cmd_hr))
     app.add_handler(CallbackQueryHandler(on_noop, pattern=r"^noop:"))
 
     logger.info("Bot starting — polling…")
