@@ -19,6 +19,9 @@ venv/
 .DS_Store
 Thumbs.db
 
+# Bot state (regenerated at runtime)
+scheduler_state.json
+
 # IDEs
 .vscode/
 .idea/
