@@ -129,7 +129,20 @@ class NaukriJobClient:
     # Helpers (moved inside class)
     # ---------------------------------------------------------------------------
 
+    @staticmethod
+    def _extract_logo(raw: dict) -> str:
+        # Naukri serves logos at img.naukimg.com; construct URL from companyId when available
+        company_id = raw.get("companyId") or raw.get("groupId")
+        if company_id:
+            return f"https://img.naukimg.com/logo_images/groups/v1/{company_id}.gif"
+        # Fall back to any logo field that may be a full URL or relative path
+        logo = raw.get("logoPath") or raw.get("companyLogo") or raw.get("logoUrl") or ""
+        if logo and logo.startswith("/"):
+            return "https://img.naukimg.com" + logo
+        return logo
+
     def _parse_job(self, raw: dict) -> Job:
+        logo_path = self._extract_logo(raw)
         return Job(
             job_id=str(raw.get("jobId") or raw.get("id") or ""),
             title=raw.get("title") or raw.get("jobTitle") or "N/A",
@@ -138,9 +151,10 @@ class NaukriJobClient:
             experience=raw.get("experienceText") or raw.get("experience") or "N/A",
             salary=raw.get("salaryDetail") or raw.get("salary") or "Not disclosed",
             posted_date=raw.get("footerPlaceholderLabel") or raw.get("postedDate") or "N/A",
-            apply_link=raw.get("jdURL") or f"https://www.naukri.com/job-listings-{raw.get('jobId', '')}",
+            apply_link="https://www.naukri.com" + raw.get("jdURL", "") if raw.get("jdURL", "").startswith("/") else raw.get("jdURL") or f"https://www.naukri.com/job-listings-{raw.get('jobId', '')}",
             description=raw.get("jobDescription") or "",
             tags=[t.strip() for t in raw.get("tagsAndSkills", "").split(",")] if raw.get("tagsAndSkills") else [],
+            logo_url=logo_path,
         )
 
     def _cluster_dates(self) -> dict:
@@ -161,14 +175,13 @@ class NaukriJobClient:
             .replace(".", "-dot-")
             .replace(" ", "-")
             .replace("+", "-")
-        )
-        kw_slug = kw_slug.strip("-")
+        ).strip("-")
 
         if location.strip():
             loc_slug = location.strip().lower().replace(" ", "-")
-            return f"{kw_slug}-jobs-in-{loc_slug}-{page}"
+            return f"{kw_slug}-jobs-in-{loc_slug}-{page}" if kw_slug else f"jobs-in-{loc_slug}-{page}"
         else:
-            return f"{kw_slug}-jobs-{page}"
+            return f"{kw_slug}-jobs-{page}" if kw_slug else f"jobs-{page}"
 
     def format_jobs(self, raw_jobs):
         formatted = []
@@ -484,15 +497,62 @@ class NaukriJobClient:
     
 
 
+    def apply_with_answers(
+        self,
+        job: "Job",
+        answers: dict,
+        sid: str = "",
+        source: str = "recommended",
+    ) -> dict:
+        """Submit apply with user-provided questionnaire answers."""
+        if not sid:
+            sid = datetime.utcnow().strftime("%Y%m%d%H%M%S") + "0000000"
+
+        apply_src, logstr_template = APPLY_SRC_MAP.get(source, APPLY_SRC_MAP["recommended"])
+        logstr = logstr_template.format(sid=sid)
+
+        payload = {
+            "strJobsarr":   [job.job_id],
+            "logstr":       logstr,
+            "flowtype":     "show",
+            "crossdomain":  True,
+            "jquery":       1,
+            "rdxMsgId":     "",
+            "chatBotSDK":   True,
+            "mandatory_skills": [],
+            "optional_skills":  [],
+            "applyTypeId":  "107",
+            "closebtn":     "y",
+            "applySrc":     apply_src,
+            "sid":          sid,
+            "mid":          "",
+            "applyData":    {job.job_id: {"answers": answers}},
+        }
+
+        headers = self._client._build_headers(auth=True)
+        headers.update({"appid": "121", "systemid": "jobseeker", "clientid": "d3skt0p", "accept": "application/json"})
+        res = self._session.post(APPLY_JOB_URL, headers=headers, json=payload)
+
+        if res.status_code in (401, 403):
+            raise NaukriAuthError(res.text)
+        if not res.ok:
+            raise NaukriParseError(f"Apply failed: {res.status_code} — {res.text}")
+        try:
+            return res.json()
+        except Exception:
+            raise NaukriParseError(f"Invalid JSON: {res.text}")
+
     def search_jobs(
         self,
         keyword: str,
         location: str = "",
-        page: int = 2,
-        job_age:int=3,
+        page: int = 1,
+        job_age: int = 0,
         experience: int = 2,
-        results_per_page: int = 20,
+        results_per_page: int = 50,
         lat_long: str = "",
+        company: str = "",
+        farea: str = "",
     ) -> list[Job]:
 
         url = JOB_SEARCH_URL
@@ -505,14 +565,21 @@ class NaukriJobClient:
             "keyword":          keyword,
             "k":                keyword,
             "pageNo":           page,
-            "experience":       experience,
-            "jobAge":           job_age,
-
             "nignbevent_src":   "jobsearchDeskGNB",
             "seoKey":           seo_key,
             "src":              "jobsearchDesk",
             "latLong":          lat_long,
         }
+        if job_age and job_age > 0:
+            params["jobAge"] = job_age
+        if experience and experience > 0:
+            params["experience"] = experience
+        if location:
+            params["l"] = location
+        if company:
+            params["companyName"] = company
+        if farea:
+            params["farea"] = farea
 
         res = self._session.get(url, headers=self._search_headers(), params=params)
 

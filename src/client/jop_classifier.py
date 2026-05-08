@@ -11,39 +11,34 @@ class JobFilterPipeline2:
 
     # ── your stack — AI scores against this ──────────────────────────────────
     MY_STACK = [
-        # ── Core backend ──────────────────────────────────────────────
-        "node", "node.js", "nodejs", "python", "javascript", "typescript",
+        # ── Core language / runtime ───────────────────────────────────
+        "java", "spring", "spring boot", "spring framework",
 
-        # ── Frameworks ───────────────────────────────────────────────
-        "express", "express.js", "fastapi", "flask", "nestjs", "nest.js",
-        "django", "hapi", "koa",
+        # ── Async / messaging ────────────────────────────────────────
+        "kafka", "rabbitmq", "activemq", "event-driven", "messaging",
+
+        # ── Caching ──────────────────────────────────────────────────
+        "redis", "memcached", "cache",
 
         # ── Databases ────────────────────────────────────────────────
-        "mongodb", "mongoose", "postgresql", "mysql", "redis", "sqlite",
-        "dynamodb", "firestore", "cassandra", "elasticsearch",
-        "sql", "nosql",
+        "postgresql", "postgres", "mysql", "mongodb", "dynamodb",
+        "hibernate", "jpa", "sql", "nosql",
 
         # ── Cloud & DevOps ───────────────────────────────────────────
-        "aws", "gcp", "azure", "docker", "kubernetes", "ci/cd",
-        "github actions", "jenkins", "terraform", "linux", "nginx",
-        "ec2", "s3", "lambda", "cloudwatch",
+        "aws", "azure", "gcp", "docker", "kubernetes", "terraform",
+        "ci/cd", "github actions", "jenkins", "linux",
+        "azure container apps", "azure devops",
 
-        # ── APIs & Messaging ─────────────────────────────────────────
-        "rest", "rest api", "restful", "graphql", "websocket", "grpc",
-        "kafka", "rabbitmq", "celery", "bull", "socket.io",
+        # ── APIs & security ──────────────────────────────────────────
+        "rest", "rest api", "restful", "graphql", "grpc", "websocket",
+        "oauth2", "oidc", "jwt", "oauth",
 
-        # ── Automation & Scraping ────────────────────────────────────
-        "selenium", "playwright", "puppeteer", "beautifulsoup", "scrapy",
-        "web scraping", "automation", "n8n", "trigger.dev", "zapier",
+        # ── Observability ────────────────────────────────────────────
+        "grafana", "prometheus", "opentelemetry", "elk", "kibana",
 
-        # ── AI / LLM ─────────────────────────────────────────────────
-        "langchain", "openai", "llm", "rag", "vector db", "pinecone",
-        "weaviate", "chromadb", "huggingface", "embeddings", "genai",
-        "langsmith", "llamaindex",
-
-        # ── Tools & Practices ────────────────────────────────────────
-        "git", "github", "postman", "swagger", "jwt", "oauth",
-        "microservices", "system design", "api design",
+        # ── Patterns & practices ─────────────────────────────────────
+        "microservices", "distributed systems", "api design",
+        "system design", "concurrency", "multithreading",
     ]
 
     # ── hard veto BEFORE ai — title only, zero ambiguity ────────────────────
@@ -56,16 +51,22 @@ class JobFilterPipeline2:
         "founder", "tutor", "trainer",
         "data scientist", "ml engineer", "data engineer", "intern", "internship",
         "engineering manager", "etl engineer", "prompt engineer",
-        "analyst", "associate is engineer", "infra engineer",
-        "observability engineer","Manager"
+        "analyst", "manager",
     ]
 
 
     VETO_COMPANIES = {
-    "accenture", "wipro", "infosys", "tcs", "cognizant",
-    "capgemini", "hcl", "tech mahindra", "mphasis", "hexaware",
-    "ltimindtree", "persistent", "birlasoft",
-}
+        # Big IT services / outsourcing — pure body-shopping, rarely product eng
+        "accenture", "wipro", "infosys", "tcs", "cognizant",
+        "capgemini", "hcl", "tech mahindra", "mphasis", "hexaware",
+        "ltimindtree", "birlasoft", "niit technologies",
+        "kyndryl", "dxc technology", "unisys", "atos", "syntel",
+        "mastech", "igate", "patni", "zensar", "cyient",
+        "l&t technology", "l&t infotech", "mindtree",
+        # Staffing / contract-placement firms
+        "teamlease", "quess", "manpower", "randstad", "adecco",
+        "ikya", "firstsource",
+    }
 
     # ── red flag sniff on description (cheap, pre-ai) ───────────────────────
     # Only the things AI genuinely can't infer from tags alone
@@ -80,21 +81,23 @@ class JobFilterPipeline2:
     SOFTWARE_KEYWORDS = {
         "software", "developer", "engineer", "engineering",
         "backend", "full stack", "fullstack",
+        "java", "spring", "spring boot",
         "python", "node", "nodejs", "javascript", "typescript",
-        "django", "fastapi", "flask", "golang",
-        "devops", "cloud", "sre", "platform",
+        "django", "fastapi", "flask",
+        "cloud", "sre", "platform",
         "api", "microservices", "infrastructure",
-        "tech lead", "sde", "swe", "mts", "programmer","react"
+        "sde", "swe", "mts", "programmer",
     }
 
     # if ANY of these appear in title → drop it
     FRONTEND_VETO_KEYWORDS = {
         "frontend", "front-end", "front end",
-      "angular", "vue", "ui developer", "ui engineer",
+        "react", "angular", "vue", "ui developer", "ui engineer",
         "android", "ios", "flutter", "mobile", "kotlin", "swift",
         "embedded", "firmware",
-        "ml engineer", "data engineer", "data scientist","intern", "internship", "lead","Golang","MLops","devops","mlops", "golang"," Web developer - Java Technologies"
-        ," Member of Technical Staff - MTS"
+        "ml engineer", "data engineer", "data scientist",
+        "intern", "internship", "lead",
+        "devops", "mlops",
     }
 
     def __init__(
@@ -322,6 +325,65 @@ class JobFilterPipeline2:
         return sorted(jobs, key=overlap, reverse=True)
 
     # =========================================================
+    # EXPERIENCE-ONLY FILTER  — no veto, no title check, no company check.
+    # Just dedup + keep roles whose exp_min is 0-4 (0+/1+/2+/3+/any range ≤4).
+    # Safe to use on Job dataclass objects directly.
+    # =========================================================
+    @classmethod
+    def filter_experience_only(cls, jobs: list) -> list:
+        seen, result = set(), []
+        for j in jobs:
+            if j.job_id:
+                if j.job_id in seen:
+                    continue
+                seen.add(j.job_id)
+            exp = j.experience or ""
+            nums = re.findall(r"\d+", exp)
+            if len(nums) >= 2:
+                exp_min, exp_max = int(nums[0]), int(nums[1])
+            elif len(nums) == 1:
+                exp_min = exp_max = int(nums[0])
+            else:
+                exp_min, exp_max = 0, 10  # unknown — include
+            if exp_min <= 4 and exp_max > 0:
+                result.append(j)
+        return result
+
+    # =========================================================
+    # QUICK FILTER  — no OpenAI, just the cheap heuristic steps.
+    # Accepts list[Job] dataclass objects, returns sorted list[Job].
+    # Safe to call from the Telegram bot without any API key.
+    # =========================================================
+    @classmethod
+    def filter_quick(cls, jobs: list, skip_exp_filter: bool = False) -> list:
+        """
+        Run all non-AI filter stages on a list of Job dataclass objects.
+        Returns a filtered + stack-overlap-sorted list[Job].
+        skip_exp_filter=True: skip experience range check (use for company-specific searches).
+        """
+        pipeline = cls.__new__(cls)
+        pipeline.MY_STACK = cls.MY_STACK
+
+        raw = []
+        for j in jobs:
+            d = j.__dict__.copy()
+            d["tags"] = [t.lower() for t in (d.get("tags") or [])]
+            raw.append(d)
+
+        raw = pipeline.normalize_jobs(raw)
+        raw = pipeline.dedup(raw)
+        raw = pipeline.hard_veto(raw)
+        if not skip_exp_filter:
+            raw = pipeline.experience_filter(raw)
+        raw = pipeline.title_filter(raw)
+        raw = pipeline.company_veto(raw)
+        raw = pipeline.tag_presort(raw)
+
+        id_to_job = {j.job_id: j for j in jobs}
+        result = [id_to_job[r["job_id"]] for r in raw if r.get("job_id") in id_to_job]
+        return result
+
+    # =========================================================
     # AI SCORING  — tags go in, score + reason come out
     # =========================================================
     def ai_score_batch(self, jobs):
@@ -374,107 +436,57 @@ Be precise — avoid clustering scores at 85 or 60. Use the full range.
 
 CANDIDATE:
 - 2.3 years experience, backend-focused
-- Core stack: Node.js, Python, MongoDB, REST APIs, AWS
-- Also knows: Docker, CI/CD, automation, Selenium, Playwright, web scraping,
-  n8n, trigger.dev, LangChain, RAG, vector DBs, FastAPI, Flask, Express
-- Looking for: SDE1 / junior-mid backend or fullstack-backend roles
-- Prefers: startups, product companies, AI/automation work, remote/hybrid
+- Core stack: Java, Spring Boot, Kafka, Redis, AWS DynamoDB, Azure
+- Also knows: PostgreSQL, MongoDB, Docker, Terraform, OAuth2/OIDC, CI/CD,
+  GitHub Actions, Grafana, Prometheus, Microservices, REST APIs
+- Looking for: SDE1 / SDE2 backend engineering roles
+- Prefers: product companies, startups, fintech, platform engineering
 - Will NOT do: pure frontend, mobile, ML research, data science, DevOps-only
 
 SCORING RUBRIC — use the full range, not just 85/60:
 
 90-100 — perfect fit, apply immediately
-  Node.js OR Python is mandatory tag + backend/fullstack role or python/node js is in the title of the job
-  + exp 0-2 yrs + familiar supporting stack. Startup or product company.
+  Java OR Spring Boot is mandatory tag + backend/microservices role
+  + exp 0-3 yrs + familiar supporting stack (Kafka/Redis/Cloud).
 
 75-89 — strong fit, apply
-  Node.js or Python present (mandatory or optional) + backend lean
+  Java or Spring Boot present (mandatory or optional) + backend lean
   + exp 0-3 yrs. Maybe one unfamiliar tag but overall good match.
 
 55-74 — decent fit, apply with lower priority
-  Some stack overlap, role is fullstack but not backend-heavy,
-  or exp is 3-4 yrs, or company type unclear.
+  Some stack overlap (cloud/Docker/Kafka without Java), role is fullstack
+  but not backend-heavy, or exp is 3-4 yrs.
 
 30-54 — weak, skip unless nothing better
-  Familiar tech present but role is vague, frontend-leaning,
+  Familiar infra tech present but role is vague, frontend-leaning,
   or exp mismatch 4-5 yrs.
 
 10-29 — poor match
-  Very little stack overlap, or role is clearly not backend and have java,  
+  Very little stack overlap; role is clearly not Java backend.
 
 0-9 — do not apply
-   That contain Java  and dotnet  Zero stack overlap (Java+Spring only, PHP only, .NET only etc.)
+  Pure Node.js/Python/PHP/.NET with no Java/Spring overlap,
   OR walk-in / venue / intern role.
 
 RULES:
-- Node.js + MongoDB + 0-2yr backend → 90+, no exceptions
-- Java alongside Node/Python is fine — judge the full picture
-- Fullstack with Node backend → 65-80 depending on tag quality
-- "Software Engineer" with Python/Node tags → treat as backend, score 70-85
+- Java + Spring Boot + 0-3yr backend → 90+, no exceptions
+- Kafka or Redis alongside Java is a strong positive signal
+- "Software Engineer" with Java/Spring tags → treat as backend, score 70-85
 - Pure React/Angular/Vue with no backend tags → 0-15
 - DevOps/infra-only with no app dev → 20-40
 - Intern roles → 0
-- Missing stack items is normal, don't over-penalise
 - Recency: 0-1 days old → mentally add 5 points
 
 Return ONLY valid JSON, no explanation outside it:
 {{
-  "0": {{"score": 92, "reason": "Node.js + MongoDB mandatory, 0-2yr, startup backend"}},
-  "1": {{"score": 0,  "reason": "Java/Spring only, zero overlap"}}
+  "0": {{"score": 92, "reason": "Java + Spring Boot mandatory, Kafka/Redis, 0-3yr, product company"}},
+  "1": {{"score": 0,  "reason": "Node.js/Python only, zero Java overlap"}}
 }}
 
 Jobs:
 {job_block}
 """
-        prompt = f"""
-You are scoring job listings for a backend developer. Score each job 0-100.
 
-CANDIDATE:
-- 2 years experience, backend-focused
-- Core stack: Node.js, Python, MongoDB, REST APIs, AWS
-- Also knows: automation, Selenium, web scraping, Docker, CI/CD, n8n, trigger.dev,
-  Playwright, Postman, Git, LangChain, RAG, vector DBs
-- Looking for: SDE1 or junior-mid backend/fullstack-backend roles
-- Likes: startups, product companies, AI/automation work, remote/hybrid
-
-SCORING:
-
-85-100 — apply immediately
-  Node.js or Python is a mandatory tag, other tags are familiar stack,
-  exp is 0-3 yrs or not specified, role is backend or fullstack-backend.
-
-60-84 — good fit, apply
-  Node.js or Python present but not mandatory, or fullstack role with
-  backend-heavy tags, or slight exp mismatch (3-4 yrs).
-
-35-59 — decent, worth applying
-  Some stack overlap but role is vague or tags are mixed frontend/backend,
-  or exp is borderline 4-5 yrs.
-
-10-34 — weak match, skip unless desperate
-  Familiar tech present but frontend-dominated, or very little tag overlap.
-
-0 — do not apply
-  Tags are entirely foreign stack (Java+Spring+Hibernate only, PHP only, etc.)
-  with zero overlap with candidate's stack. OR walk-in / venue in title.
-
-COMMON SENSE RULES (these matter):
-- Java appearing alongside Node.js or Python is FINE — score on the whole picture.
-- "Fullstack" with Node backend is a GOOD fit (60-80 range).
-- Missing one or two stack items is normal — don't penalise heavily.
-- A job tagged [node.js, mongodb] with exp 0-2 yrs should score 85+.
-- A job tagged [java, spring, hibernate] with NO node/python should score 0-15.
-- Recency matters: jobs 0-1 days old get +5 bonus mentally.
-
-Return ONLY valid JSON, no explanation outside it:
-{{
-  "0": {{"score": 85, "reason": "Node.js + MongoDB mandatory, 0-2yr, startup"}},
-  "1": {{"score": 0,  "reason": "Java/Spring only, zero stack overlap"}}
-}}
-
-Jobs:
-{job_block}
-"""
 
         try:
             res = requests.post(

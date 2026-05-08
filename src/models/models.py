@@ -35,6 +35,7 @@ class Job:
     apply_link: str
     description: str = ""
     tags: list = field(default_factory=list)
+    logo_url: str = ""
 
 @dataclass
 class ProfileUpdateResult:
